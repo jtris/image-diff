@@ -4,32 +4,87 @@
 #include <string.h>
 #include <errno.h>
 
+#define ASSERT(_e, ...) if (!(_e)) { fprintf(stderr, __VA_ARGS__); exit(1); }
+
 typedef int Errno;
 
 typedef struct {
     uint8_t (*pixel_map)[3];
     size_t width, height;
+    size_t resolution;
 } image;
 
 
+uint16_t get_two_pixel_difference(const uint8_t pixel1[3], const uint8_t pixel2[3]);
+Errno create_pixel_difference_heatmap(image *save_image, const image *image1, const image *image2);
 Errno read_ppm(image *save_image, const char *filepath);
-Errno create_ppm(image *save_image, const char *filepath);
+Errno export_as_ppm(const image *save_image, const char *filepath);
 Errno create_sample_ppm();
 void destroy_image_pixel_map(image *image_object);
 
 
 int main()
 {
-    image image_object;
-
     // ...
-
-    destroy_image_pixel_map(&image_object);
     return 0;
 }
 
 
-Errno create_ppm(image *save_image, const char *filepath)
+Errno create_pixel_difference_heatmap(image *save_image, const image *image1, const image *image2)
+{
+    // verify image compability
+    if (image1->width != image2->width || image1->height != image2->height) return 1;
+
+    // initialize the save_image
+    save_image->width = image1->width;
+    save_image->height = image1->height;
+    save_image->resolution = image1->resolution;
+
+    // compute all "pixel difference" values
+    uint16_t pixel_differences[save_image->resolution];
+
+    uint16_t highest_difference_value = 0;
+    for (size_t i = 0; i < save_image->resolution; ++i) {
+        pixel_differences[i] = get_two_pixel_difference(image1->pixel_map[i], image2->pixel_map[i]);
+        
+        if (pixel_differences[i] > highest_difference_value)
+            highest_difference_value = pixel_differences[i];
+    }
+
+    // scale difference values to convert them to pixels
+    uint8_t scaled_pixel_differences[save_image->resolution]; 
+
+    for (size_t p = 0; p < save_image->resolution; ++p) {
+        scaled_pixel_differences[p] = 255 * (1 - (pixel_differences[p] / highest_difference_value));
+    }
+
+    // convert scaled pixel difference values into image data
+    save_image->pixel_map = malloc(sizeof(uint8_t[save_image->resolution][3]));
+
+    for (size_t n = 0; n < save_image->resolution; ++n) {
+        uint8_t pixel_value = scaled_pixel_differences[n];
+
+        for (size_t m = 0; m < 3; ++m) {
+            save_image->pixel_map[n][m] = pixel_value;
+        }
+    }
+
+    return 0;
+}
+
+
+uint16_t get_two_pixel_difference(const uint8_t pixel1[3], const uint8_t pixel2[3])
+{
+    uint16_t difference = 0;
+
+    for (int i = 0; i < 3; ++i) {
+        difference += abs(pixel1[i] - pixel2[i]);
+    }
+    return difference;
+}
+
+
+Errno export_as_ppm(const image *save_image, const char *filepath)
 {
     FILE *f = NULL;
     f = fopen(filepath, "wb");
@@ -60,6 +115,7 @@ Errno read_ppm(image *save_image, const char *filepath)
 
     // read image resolution
     fscanf(f, "%zu %zu", &(save_image->width), &(save_image->height));
+    save_image->resolution = save_image->width * save_image->height;
 
     // verify the color palette
     uint8_t color_palette;
@@ -67,10 +123,8 @@ Errno read_ppm(image *save_image, const char *filepath)
     if (color_palette != 255) return 1;
 
     // read the image data
-    size_t image_resolution = save_image->height*save_image->width;
-
-    uint8_t (*pixels)[3] = malloc(sizeof(uint8_t[image_resolution][3]));
-    fread(pixels, sizeof(uint8_t), image_resolution*3, f);
+    uint8_t (*pixels)[3] = malloc(sizeof(uint8_t[save_image->resolution][3]));
+    fread(pixels, sizeof(uint8_t), save_image->resolution*3, f);
     save_image->pixel_map = pixels;
 
     fclose(f);
