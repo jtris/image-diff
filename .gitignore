@@ -57,3 +57,11 @@ dkms.conf
 # bash, batch scripts
 *.sh
 *.bat
+
+# other
+png/
+jpg/
+ppm/
+*.ppm
+*.png
+*.jpg

@@ -4,6 +4,11 @@
 #include <string.h>
 #include <errno.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image.h"
+#include "stb_image_write.h"
+
 #define ASSERT(_e, ...) if (!(_e)) { fprintf(stderr, __VA_ARGS__); exit(1); }
 
 typedef int Errno;
@@ -15,6 +20,8 @@ typedef struct {
 } image;
 
 
+Errno read_png(image *save_image, const char *filepath);
+Errno export_as_png_or_jpg(image *save_image, const char *filepath);
 uint16_t get_two_pixel_difference(const uint8_t pixel1[3], const uint8_t pixel2[3]);
 Errno create_pixel_difference_heatmap(image *save_image, const image *image1, const image *image2);
 Errno read_ppm(image *save_image, const char *filepath);
@@ -30,18 +37,75 @@ int main()
 }
 
 
+Errno export_as_png_or_jpg(image *save_image, const char *filepath)
+{
+    // get file extension
+    char file_extension[4];
+    size_t filepath_length = 0;
+    for (int i = 0; ; ++i) {
+        if (filepath[i] == 0) break;
+        filepath_length++;
+    }
+    
+    if (filepath_length <= 5) return 1;
+
+    // load it into file_extension[]
+    // compare, etc.
+    for (int i = 0; i < 3; ++i) {
+        file_extension[i] = filepath[filepath_length-3+i];
+    }
+    file_extension[3] = 0;
+
+    // png
+    if (strcmp(file_extension, "png") == 0) {
+        Errno err = stbi_write_png(filepath, save_image->width, save_image->height, 3, save_image->pixel_map, save_image->width*3);
+        if (err == 0) return 1; // 0 means failure here
+        return 0;
+    }
+
+    // jpg
+    Errno err = stbi_write_jpg(filepath, save_image->width, save_image->height, 3, save_image->pixel_map, 100);
+    if (err == 0) return 1; // 0 means failure here
+    return 0;
+}
+
+
+Errno read_png(image *save_image, const char *filepath)
+{
+    int width, height;
+    unsigned char *data = stbi_load(filepath, &width, &height, NULL, 3);
+    if (data == NULL) return 1;
+
+    save_image->width = width;
+    save_image->height = height;
+    save_image->resolution = save_image->width * save_image->height;
+
+    // map the retrieved data to our image struct's pixel map
+    save_image->pixel_map = malloc(sizeof(uint8_t[save_image->resolution][3]));
+
+    for (size_t i = 0; i < save_image->resolution; ++i) {
+        save_image->pixel_map[i][0] = data[i*3+0];
+        save_image->pixel_map[i][1] = data[i*3+1];
+        save_image->pixel_map[i][2] = data[i*3+2];
+    }
+
+    stbi_image_free(data);
+    return 0;
+}
+
 Errno create_pixel_difference_heatmap(image *save_image, const image *image1, const image *image2)
 {
     // verify image compability
     if (image1->width != image2->width || image1->height != image2->height) return 1;
-
+    
     // initialize the save_image
     save_image->width = image1->width;
     save_image->height = image1->height;
     save_image->resolution = image1->resolution;
 
     // compute all "pixel difference" values
-    uint16_t pixel_differences[save_image->resolution];
+    uint16_t *pixel_differences = malloc(save_image->resolution * sizeof(uint16_t));
+    if (!pixel_differences) return 1;
 
     uint16_t highest_difference_value = 0;
     for (size_t i = 0; i < save_image->resolution; ++i) {
@@ -52,10 +116,11 @@ Errno create_pixel_difference_heatmap(image *save_image, const image *image1, co
     }
 
     // scale difference values to convert them to pixels
-    uint8_t scaled_pixel_differences[save_image->resolution]; 
+    uint8_t *scaled_pixel_differences = malloc(save_image->resolution * sizeof(uint8_t));
+    if (!scaled_pixel_differences) return 1;
 
     for (size_t p = 0; p < save_image->resolution; ++p) {
-        scaled_pixel_differences[p] = 255 * (1 - (pixel_differences[p] / highest_difference_value));
+        scaled_pixel_differences[p] = 255 * (1.0f - ((float)pixel_differences[p] / (float)highest_difference_value));
     }
 
     // convert scaled pixel difference values into image data
@@ -69,6 +134,8 @@ Errno create_pixel_difference_heatmap(image *save_image, const image *image1, co
         }
     }
 
+    free(pixel_differences);
+    free(scaled_pixel_differences);
     return 0;
 }
 
